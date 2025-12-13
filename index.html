@@ -2,9 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Primary Verification Code (Must be top of head) -->
+    <meta name="google-site-verification" content="b6o5Uep7k2pXs514VueUpuhtibGYBvVk-qux-D54uew" />
+    <!-- Secondary Verification Code -->
+    <meta name="google-site-verification" content="QmPVvDx4vqZ8T6pYINcqfa_flpLa3YyVBDA9flU8xEQ" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DPSS School Management System</title>
+    <title>DPSS School - Virtues</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
@@ -33,7 +37,7 @@
       }
     </script>
     <style>
-      /* Custom scrollbar for tables */
+      /* Custom scrollbar for tables - now primarily for vertical scrolling if needed, or fallback */
       .custom-scrollbar::-webkit-scrollbar {
         height: 8px;
         width: 8px;
@@ -48,6 +52,16 @@
       .custom-scrollbar::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
       }
+      
+      /* Hide scrollbar for elements using CustomScrollbar */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+      }
+
       @keyframes flyAcross {
         0% { transform: translateX(-100vw) translateY(0); }
         25% { transform: translateX(-50vw) translateY(-50px); }
@@ -69,7 +83,10 @@
     "framer-motion": "https://esm.sh/framer-motion@^12.23.26",
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
-    "date-fns": "https://esm.sh/date-fns@^4.1.0"
+    "date-fns": "https://esm.sh/date-fns@^4.1.0",
+    "firebase/app": "https://esm.sh/firebase@10.8.0/app",
+    "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore",
+    "firebase/": "https://esm.sh/firebase@^12.6.0/"
   }
 }
 </script>

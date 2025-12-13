@@ -87,7 +87,7 @@ const QuickMarkModal: React.FC<QuickMarkModalProps> = ({
                <p className="font-bold text-slate-900">Instructions:</p>
                <ul className="space-y-1 ml-4 list-disc marker:text-slate-400">
                   <li>Type absent student name → marked as <strong className="text-red-600">1</strong> (absent)</li>
-                  <li>Type "Name P" or "Name Permission" → marked as <strong className="text-orange-500">0.25</strong> (permission)</li>
+                  <li>Type "Name P" or "Name Permission" → marked as <strong className="text-orange-500">P</strong> (permission)</li>
                   <li>All others → marked as <strong className="text-green-600">0</strong> (present)</li>
                   <li>Applied to all time shifts for today</li>
                </ul>

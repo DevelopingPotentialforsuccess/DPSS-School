@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Student } from '../types';
-import { isSameDay, parseISO } from 'date-fns';
+import { isSameDay, parseISO, isValid } from 'date-fns';
 
 interface Props {
   students?: Student[];
@@ -15,8 +15,11 @@ const Superman: React.FC<Props> = ({ students = [] }) => {
       // Logic: Trigger if student is in Hall/Office Study AND Deadline is TODAY
       const today = new Date();
       const dueStudents = students.filter(s => {
+        // Broaden check slightly to ensure we catch relevant students
         if (s.section !== 'hall_study' && s.section !== 'office_study') return false;
+        
         if (!s.deadline) return false;
+        if (!isValid(parseISO(s.deadline))) return false;
         
         // Ensure assistant name exists to show
         if (!s.assistant) return false;
@@ -35,10 +38,10 @@ const Superman: React.FC<Props> = ({ students = [] }) => {
       }
     };
 
-    // Check every 30 seconds
-    const interval = setInterval(checkDeadlines, 30000);
+    // Check every 20 seconds
+    const interval = setInterval(checkDeadlines, 20000);
     
-    // Initial check (delay slightly to allow app to load)
+    // Initial check (delay 2s to allow app load)
     const timeout = setTimeout(checkDeadlines, 2000);
 
     return () => {
@@ -55,25 +58,30 @@ const Superman: React.FC<Props> = ({ students = [] }) => {
           animate={{ x: '120vw', y: '-20vh' }}
           exit={{ opacity: 0 }}
           transition={{ duration: 8, ease: "linear" }}
-          className="fixed top-1/2 z-50 pointer-events-none flex items-center justify-center"
+          // High z-index to fly over everything
+          className="fixed top-1/2 z-[100] pointer-events-none flex items-center justify-center"
         >
           <div className="relative group">
-             {/* Supergirl Image - Placeholder for the specific image requested */}
+             {/* Supergirl Image - Full Body Transparent PNG */}
              <img 
-               src="https://upload.wikimedia.org/wikipedia/en/3/30/Supergirl_%28Melissa_Benoist%29.jpg" 
+               src="https://www.pngarts.com/files/3/Supergirl-PNG-Image-Background.png"
+               onError={(e) => {
+                 // Fallback to a clear Green placeholder if the external image is blocked
+                 e.currentTarget.src = "https://placehold.co/300x600/15803d/ffffff?text=Supergirl+Alert";
+               }}
                alt="Supergirl" 
-               className="h-96 w-auto object-contain drop-shadow-2xl"
+               className="h-[250px] w-auto object-contain drop-shadow-2xl"
              />
              
-             {/* Assistant Name Board - Positioned to look like she is holding it or it's floating with her */}
-             <div className="absolute top-[60%] left-[-20%] transform -rotate-6 bg-gradient-to-br from-white to-slate-100 p-4 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border-4 border-red-600 max-w-[200px] text-center">
+             {/* Assistant Name Board - Green Theme */}
+             <div className="absolute top-[60%] left-[-20%] transform -rotate-6 bg-gradient-to-br from-white to-green-50 p-4 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border-4 border-green-600 max-w-[200px] text-center">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">
                   Alert Assistant
                 </div>
-                <div className="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-red-600 to-red-800 leading-tight">
+                <div className="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-green-800 leading-tight">
                   {activeAlert.assistant}
                 </div>
-                <div className="mt-2 text-[10px] font-medium text-slate-500 border-t pt-1 border-slate-200">
+                <div className="mt-2 text-[10px] font-medium text-slate-500 border-t pt-1 border-green-200">
                   Student: {activeAlert.student}
                 </div>
              </div>

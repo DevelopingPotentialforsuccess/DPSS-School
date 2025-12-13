@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   BookOpen, Calendar, Users, GraduationCap, 
-  Search, Trash2, Download, Share2, HelpCircle, 
+  Trash2, Download, Share2, HelpCircle, 
   RotateCcw, RotateCw, Settings, ZoomIn, ZoomOut, Maximize, Minimize,
-  Plus, Sparkles, Database
+  Plus, Sparkles, Database, Type, Clock, X, ChevronDown, Filter, LogOut,
+  Cloud, CloudOff, Wifi
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { format, parseISO, isValid } from 'date-fns';
 
 import { Student, Section, AttendanceRecord, AppState } from './types';
 import { INITIAL_LEVELS, DEFAULT_STUDENT, TIME_SHIFTS } from './constants';
@@ -13,10 +15,161 @@ import DataTable from './components/DataTable';
 import AttendanceTable from './components/AttendanceTable';
 import QuickAddModal from './components/QuickAddModal';
 import Superman from './components/Superman';
+import LoginScreen from './components/LoginScreen';
+import ConnectionModal from './components/ConnectionModal';
+import HelpGuide from './components/HelpGuide';
+import { isCloudEnabled, saveSchoolData, subscribeToSchoolData } from './services/firebase';
 
 const STORAGE_KEY = 'dpss_school_data_v1';
+const AUTH_KEY = 'dpss_auth_user';
+const SCHOOL_ID_KEY = 'dpss_school_id';
+
+// Dropdown Component for Filters with Fixed Positioning
+interface FilterOption {
+  value: string;
+  label?: string;
+  count: number;
+}
+
+const FilterDropdown = ({ 
+  icon: Icon, 
+  label, 
+  value, 
+  options, 
+  onChange 
+}: { 
+  icon: any, 
+  label: string, 
+  value: string | null, 
+  options: FilterOption[], 
+  onChange: (val: string | null) => void 
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState({ top: 0, left: 0, minWidth: 0 });
+
+  // Update coordinates when opening
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 6,
+        left: rect.left,
+        minWidth: Math.max(rect.width, 240) // Ensure enough width for counts
+      });
+    }
+  }, [isOpen]);
+
+  // Handle click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        isOpen &&
+        dropdownRef.current && 
+        !dropdownRef.current.contains(event.target as Node) &&
+        buttonRef.current && 
+        !buttonRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOpen]);
+
+  // Handle scroll to update position or close
+  useEffect(() => {
+    const handleScroll = () => {
+        if(isOpen) setIsOpen(false); // Close on scroll for simplicity
+    };
+    window.addEventListener('scroll', handleScroll, true);
+    return () => window.removeEventListener('scroll', handleScroll, true);
+  }, [isOpen]);
+
+  const displayLabel = value 
+    ? (options.find(o => o.value === value)?.label || value)
+    : label;
+
+  return (
+    <>
+      <button 
+        ref={buttonRef}
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors shadow-sm min-w-fit ${value ? 'bg-orange-50 border-orange-200 text-orange-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'}`}
+      >
+        <Icon className={`w-4 h-4 ${value ? 'text-orange-600' : 'text-slate-500'}`} />
+        <div className="text-left flex flex-col leading-none">
+          <span className={`text-[10px] font-medium ${value ? 'text-orange-600' : 'text-slate-400'}`}>
+            {value ? 'Filtered by' : 'All'}
+          </span>
+          <span className="text-sm font-semibold truncate max-w-[120px]">
+            {displayLabel}
+          </span>
+        </div>
+        <ChevronDown className={`w-3 h-3 ml-1 ${value ? 'text-orange-600' : 'text-slate-400'}`} />
+      </button>
+
+      {isOpen && (
+        <div 
+          ref={dropdownRef}
+          className="fixed z-[100] bg-white border border-slate-200 rounded-lg shadow-xl max-h-80 overflow-y-auto flex flex-col animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: coords.top, left: coords.left, minWidth: coords.minWidth }}
+        >
+          <div className="p-2 border-b border-slate-100 sticky top-0 bg-white z-10">
+            <input 
+              type="text" 
+              placeholder={`Search ${label}...`} 
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-200"
+              onClick={(e) => e.stopPropagation()} 
+              autoFocus
+            />
+          </div>
+          <button
+            onClick={() => { onChange(null); setIsOpen(false); }}
+            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between ${!value ? 'font-bold text-primary-600 bg-primary-50' : 'text-slate-700'}`}
+          >
+             <span>All {label}</span>
+             {!value && <CheckIcon className="w-3 h-3" />}
+          </button>
+          <div className="flex-1 overflow-y-auto">
+            {options.map((opt) => (
+                <button
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setIsOpen(false); }}
+                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between border-t border-slate-50 ${value === opt.value ? 'font-bold text-primary-600 bg-primary-50' : 'text-slate-700'}`}
+                >
+                <span className="truncate pr-2">{opt.label || opt.value}</span>
+                <div className="flex items-center gap-2">
+                   <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium min-w-[20px] text-center">
+                     {opt.count}
+                   </span>
+                   {value === opt.value && <CheckIcon className="w-3 h-3 flex-shrink-0" />}
+                </div>
+                </button>
+            ))}
+            {options.length === 0 && (
+                <div className="p-4 text-center text-xs text-slate-400 italic">No {label.toLowerCase()} found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+const CheckIcon = ({ className }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
 
 export default function App() {
+  // Auth State
+  const [authUser, setAuthUser] = useState<string | null>(() => localStorage.getItem(AUTH_KEY));
+  const [currentSchoolId, setCurrentSchoolId] = useState<string | null>(() => localStorage.getItem(SCHOOL_ID_KEY));
+  
   // State initialization
   const [state, setState] = useState<AppState>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -26,10 +179,14 @@ export default function App() {
       classLevels: INITIAL_LEVELS,
       currentTab: 'hall_study',
       zoomLevel: 1,
-      fontSize: 13,
+      fontSize: 14,
       isFullScreen: false
     };
   });
+
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // History for Undo/Redo
   const [history, setHistory] = useState<AppState[]>([]);
@@ -38,10 +195,106 @@ export default function App() {
   
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
 
-  // Persistence
+  // Filters State
+  const [filters, setFilters] = useState({
+    teacher: null as string | null,
+    assistant: null as string | null,
+    deadline: null as string | null,
+    time: null as string | null
+  });
+
+  // Local Persistence
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  // Cloud Persistence & Sync
+  useEffect(() => {
+    // 1. Subscribe to Cloud changes
+    let unsubscribe = () => {};
+    const useCloud = isCloudEnabled() && currentSchoolId;
+    setIsCloudConnected(!!useCloud);
+
+    if (useCloud) {
+       unsubscribe = subscribeToSchoolData(currentSchoolId!, (newData) => {
+         setState(prev => ({
+           ...prev,
+           students: newData.students || prev.students,
+           attendance: newData.attendance || prev.attendance,
+           classLevels: newData.classLevels || prev.classLevels
+         }));
+       });
+    }
+
+    return () => unsubscribe();
+  }, [currentSchoolId]);
+
+  // Save to Cloud on Change (Debounced ideally, but simple here)
+  useEffect(() => {
+    if (isCloudEnabled() && currentSchoolId && authUser) {
+      const timeoutId = setTimeout(() => {
+        saveSchoolData(currentSchoolId, {
+          students: state.students,
+          attendance: state.attendance,
+          classLevels: state.classLevels
+        });
+      }, 1000); // 1s debounce to prevent write spam
+      return () => clearTimeout(timeoutId);
+    }
+  }, [state.students, state.attendance, state.classLevels, currentSchoolId, authUser]);
+
+
+  // Auth Persistence
+  useEffect(() => {
+    if (authUser) {
+      localStorage.setItem(AUTH_KEY, authUser);
+    } else {
+      localStorage.removeItem(AUTH_KEY);
+    }
+    
+    if (currentSchoolId) {
+      localStorage.setItem(SCHOOL_ID_KEY, currentSchoolId);
+    } else {
+      localStorage.removeItem(SCHOOL_ID_KEY);
+    }
+  }, [authUser, currentSchoolId]);
+
+  // Handle Data Export
+  const handleExport = () => {
+    const dataStr = JSON.stringify(state, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `dpss_backup_${format(new Date(), 'yyyy-MM-dd')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Handle Data Import
+  const handleImport = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string);
+        if (json.students && Array.isArray(json.students)) {
+           setState(prev => ({
+             ...prev,
+             students: json.students,
+             attendance: json.attendance || [],
+             classLevels: json.classLevels || INITIAL_LEVELS
+           }));
+           alert("Data imported successfully!");
+        } else {
+          alert("Invalid data file.");
+        }
+      } catch (err) {
+        alert("Failed to parse file.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
 
   // History Logic
   useEffect(() => {
@@ -86,46 +339,6 @@ export default function App() {
     setState(prev => ({ ...prev, students: [newStudent, ...prev.students] }));
   };
 
-  const generateDemoStudents = () => {
-    const firstNames = ["Sok", "Chan", "Neang", "Khem", "Bopha", "Vibol", "Dara", "Thida", "Srey", "Pich", "Samnang", "Vireak", "Nary", "Sophea", "Rithy", "Chea", "Malis", "Kunthea", "Vanna", "Sovann"];
-    const lastNames = ["Sau", "Lim", "Heng", "Chea", "Ou", "Seng", "Kim", "Ly", "Keo", "Meas", "Sem", "Prom", "Chhim", "Ros", "Mao", "Sok", "Khiev", "Nov", "Pang", "Tang"];
-    
-    const demoStudents: Student[] = Array.from({ length: 20 }).map((_, i) => {
-      const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
-      const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
-      
-      // Assign to current tab
-      const targetSection = state.currentTab as Section;
-      
-      // Some deadlines today for testing Supergirl
-      const isToday = Math.random() > 0.8;
-      const today = new Date().toISOString().split('T')[0];
-      const future = new Date(Date.now() + Math.random() * 1000 * 60 * 60 * 24 * 30).toISOString().split('T')[0];
-
-      return {
-        ...DEFAULT_STUDENT,
-        id: uuidv4(),
-        fullName: `${lastName} ${firstName}`,
-        level: INITIAL_LEVELS[Math.floor(Math.random() * INITIAL_LEVELS.length)],
-        section: targetSection,
-        startDate: new Date().toISOString().split('T')[0],
-        assistant: Math.random() > 0.5 ? "Sreypov" : "Dara",
-        deadline: isToday ? today : future,
-        behavior: Math.random() > 0.8 ? "Needs improvement" : "Good",
-        contactParent: Math.random() > 0.9,
-        headTeacher: Math.random() > 0.95,
-        time: "5:20-6:20"
-      };
-    });
-
-    if (window.confirm(`Add 20 demo students to ${state.currentTab === 'attendance' ? 'Attendance list' : state.currentTab}?`)) {
-      setState(prev => ({
-        ...prev,
-        students: [...demoStudents, ...prev.students]
-      }));
-    }
-  };
-
   const updateStudent = (id: string, field: keyof Student, value: any) => {
     setState(prev => ({
       ...prev,
@@ -134,7 +347,6 @@ export default function App() {
   };
 
   const deleteStudent = (id: string) => {
-    // Soft delete not implemented fully for visual clarity, just removing for now
     if (confirm('Are you sure you want to delete this student?')) {
         setState(prev => ({
             ...prev,
@@ -143,13 +355,35 @@ export default function App() {
     }
   };
 
+  const handleInsertRow = (targetId: string, position: 'above' | 'below') => {
+    setState(prev => {
+        const index = prev.students.findIndex(s => s.id === targetId);
+        if (index === -1) return prev;
+        
+        // Create new student with defaults + current active filters to ensure visibility
+        const newStudent: Student = {
+            ...DEFAULT_STUDENT,
+            id: uuidv4(),
+            section: prev.currentTab as Section,
+            teachers: filters.teacher || DEFAULT_STUDENT.teachers,
+            assistant: filters.assistant || DEFAULT_STUDENT.assistant,
+            time: filters.time || DEFAULT_STUDENT.time,
+        };
+        
+        const newStudents = [...prev.students];
+        const insertIndex = position === 'above' ? index : index + 1;
+        newStudents.splice(insertIndex, 0, newStudent);
+        
+        return { ...prev, students: newStudents };
+    });
+  };
+
   const handleAIAdd = (newStudents: Partial<Student>[]) => {
     const processed: Student[] = newStudents.map(s => ({
       ...DEFAULT_STUDENT,
       ...s,
       id: uuidv4(),
       section: state.currentTab as Section,
-      // Ensure booleans are false if undefined
       contactParent: !!s.contactParent,
       headTeacher: !!s.headTeacher
     }));
@@ -162,11 +396,7 @@ export default function App() {
 
   const updateAttendance = (studentId: string, date: string, shift: string, status: 0 | 0.25 | 1) => {
     setState(prev => {
-      // Remove existing for this slot
       const filtered = prev.attendance.filter(r => !(r.studentId === studentId && r.date === date && r.timeShift === shift));
-      
-      // Even if status is 0, we now store it because 0 implies explicitly "Present" (Green) vs Undefined (White/Future)
-      // This supports the "Hide Zeros but Show Green" requirement
       return {
         ...prev,
         attendance: [...filtered, { id: uuidv4(), studentId, date, timeShift: shift, status }]
@@ -176,12 +406,8 @@ export default function App() {
 
   const handleBatchAttendanceMark = (updates: { studentId: string; status: 0 | 0.25 | 1 }[], date: string) => {
     setState(prev => {
-      // Filter out records for the target date because we are overwriting ALL shifts for this date
       const otherRecords = prev.attendance.filter(r => r.date !== date);
-
       const newRecords: AttendanceRecord[] = [];
-
-      // Loop through ALL time shifts
       TIME_SHIFTS.forEach(shift => {
         updates.forEach(u => {
           newRecords.push({
@@ -193,7 +419,6 @@ export default function App() {
           });
         });
       });
-
       return {
         ...prev,
         attendance: [...otherRecords, ...newRecords]
@@ -201,11 +426,13 @@ export default function App() {
     });
   };
 
-  // derived data
-  const filteredStudents = useMemo(() => {
-    // Strictly filter by section. 'attendance' tab shows only students with section='attendance'
-    return state.students.filter(s => s.section === state.currentTab);
-  }, [state.students, state.currentTab]);
+  const updateFontSize = (delta: number) => {
+      setState(prev => ({ ...prev, fontSize: Math.max(10, Math.min(24, prev.fontSize + delta)) }));
+  };
+
+  const updateZoom = (delta: number) => {
+      setState(prev => ({ ...prev, zoomLevel: Math.max(0.5, Math.min(1.5, prev.zoomLevel + delta)) }));
+  };
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
@@ -219,6 +446,105 @@ export default function App() {
     }
   };
 
+  const handleLogin = (user: string, schoolId: string) => {
+    setAuthUser(user);
+    setCurrentSchoolId(schoolId);
+  };
+
+  const handleLogout = () => {
+    if (confirm("Are you sure you want to log out?")) {
+      setAuthUser(null);
+      setCurrentSchoolId(null);
+      // Clear data on logout so next user doesn't see it until they log in
+      setState(prev => ({...prev, students: [], attendance: []})); 
+    }
+  };
+
+  // derived data
+  const currentTabStudents = useMemo(() => {
+    return state.students.filter(s => s.section === state.currentTab);
+  }, [state.students, state.currentTab]);
+
+  // Extract Unique Values for Filters with Counts
+  const uniqueTeachers = useMemo(() => {
+    const counts: Record<string, number> = {};
+    currentTabStudents.forEach(s => {
+       if (s.teachers) {
+           s.teachers.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
+               counts[t] = (counts[t] || 0) + 1;
+           });
+       }
+    });
+    return Object.entries(counts)
+        .map(([val, count]) => ({ value: val, count }))
+        .sort((a, b) => a.value.localeCompare(b.value));
+  }, [currentTabStudents]);
+
+  const uniqueAssistants = useMemo(() => {
+    const counts: Record<string, number> = {};
+    currentTabStudents.forEach(s => {
+       if (s.assistant) {
+           s.assistant.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
+               counts[t] = (counts[t] || 0) + 1;
+           });
+       }
+    });
+    return Object.entries(counts)
+        .map(([val, count]) => ({ value: val, count }))
+        .sort((a, b) => a.value.localeCompare(b.value));
+  }, [currentTabStudents]);
+
+  const uniqueTimes = useMemo(() => {
+    const counts: Record<string, number> = {};
+    currentTabStudents.forEach(s => {
+        if (s.time) {
+            counts[s.time] = (counts[s.time] || 0) + 1;
+        }
+    });
+    return Object.entries(counts)
+        .map(([val, count]) => ({ value: val, count }))
+        .sort((a, b) => a.value.localeCompare(b.value));
+  }, [currentTabStudents]);
+  
+  const uniqueDeadlines = useMemo(() => {
+      const counts: Record<string, number> = {};
+      currentTabStudents.forEach(s => {
+          if (s.deadline && isValid(parseISO(s.deadline))) {
+              counts[s.deadline] = (counts[s.deadline] || 0) + 1;
+          }
+      });
+      return Object.entries(counts)
+          .map(([val, count]) => ({ value: val, label: format(parseISO(val), 'dd-MMM-yyyy'), count }))
+          .sort((a, b) => a.value.localeCompare(b.value));
+  }, [currentTabStudents]);
+
+  // Apply Filters
+  const filteredStudents = useMemo(() => {
+    return currentTabStudents.filter(s => {
+      // Partial match for teachers/assistants because a student might have "T. John, T. Sarah"
+      // If filter is "T. John", it should show.
+      if (filters.teacher) {
+         if (!s.teachers) return false;
+         const studentTeachers = s.teachers.split(',').map(t => t.trim());
+         if (!studentTeachers.includes(filters.teacher)) return false;
+      }
+      if (filters.assistant) {
+        if (!s.assistant) return false;
+        const studentAssistants = s.assistant.split(',').map(t => t.trim());
+        if (!studentAssistants.includes(filters.assistant)) return false;
+      }
+      
+      if (filters.time && s.time !== filters.time) return false;
+      if (filters.deadline && s.deadline !== filters.deadline) return false;
+      return true;
+    });
+  }, [currentTabStudents, filters]);
+
+  // Auth Guard
+  if (!authUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className={`min-h-screen flex flex-col bg-slate-50 font-sans ${state.isFullScreen ? 'h-screen' : ''}`}>
       <Superman students={state.students} />
@@ -229,31 +555,67 @@ export default function App() {
           <div className="container mx-auto px-4 py-3">
             <div className="flex justify-between items-center mb-4">
               <div className="flex items-center gap-3">
-                <div className="bg-white/20 p-2 rounded-lg backdrop-blur-sm">
-                  <BookOpen className="w-6 h-6 text-white" />
+                <div className="bg-white p-1 rounded-lg">
+                   <span className="text-orange-600 font-bold text-xl px-1">DS</span>
                 </div>
                 <div>
-                  <h1 className="text-xl font-bold leading-tight">DPSS Management</h1>
-                  <p className="text-xs text-orange-100 opacity-90">Build Wisdom with Virtues</p>
+                  <h1 className="text-xl font-bold leading-tight">DPSS School Management</h1>
+                  <p className="text-xs text-orange-100 opacity-90 flex items-center gap-2">
+                     <span>Build Wisdom with Virtues</span>
+                     <span className="w-1 h-1 bg-white rounded-full opacity-50"></span>
+                     <span>{currentSchoolId}</span>
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                 <button onClick={generateDemoStudents} className="flex items-center gap-1 bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full text-sm font-medium transition-colors" title="Add 20 demo students">
-                    <Database className="w-4 h-4" /> Demo Data
+                 {/* Cloud Status Indicator with Click Handler */}
+                 <button 
+                   onClick={() => setIsConnectionModalOpen(true)}
+                   className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                     isCloudConnected 
+                      ? 'bg-green-500/20 text-white border-green-400/30 hover:bg-green-500/30' 
+                      : 'bg-slate-900/20 text-white/80 border-white/10 hover:bg-slate-900/30'
+                   }`}
+                   title="Click to manage connection settings"
+                 >
+                    {isCloudConnected ? <Wifi className="w-3 h-3" /> : <CloudOff className="w-3 h-3" />}
+                    {isCloudConnected ? 'Live Sync' : 'Offline'}
                  </button>
+
                  <div className="h-6 w-px bg-white/30 mx-2"></div>
-                 <button onClick={() => setIsQuickAddOpen(true)} className="flex items-center gap-1 bg-white text-orange-600 px-3 py-1.5 rounded-full text-sm font-bold shadow hover:bg-orange-50 transition-colors">
-                    <Sparkles className="w-4 h-4" /> AI Quick Add
+
+                 {/* Top Right Actions */}
+                 <div className="flex items-center gap-2 bg-orange-700/30 px-3 py-1 rounded-lg text-xs font-medium">
+                    <span>Total: {currentTabStudents.length}</span>
+                 </div>
+                 <div className="flex items-center gap-2 bg-orange-700/30 px-3 py-1 rounded-lg text-xs font-medium">
+                    <span>Showing: {filteredStudents.length}</span>
+                 </div>
+
+                 <div className="h-6 w-px bg-white/30 mx-2"></div>
+
+                 <button onClick={() => setIsQuickAddOpen(true)} className="flex items-center gap-1 bg-purple-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow hover:bg-purple-700 transition-colors">
+                    <Sparkles className="w-4 h-4" /> Quick Add
                  </button>
+
+                 <button 
+                    onClick={() => setIsHelpOpen(true)} 
+                    className="flex items-center gap-1 bg-yellow-300 text-yellow-900 px-3 py-1.5 rounded-lg text-sm font-bold shadow-lg hover:bg-yellow-400 transition-colors ml-2 ring-4 ring-yellow-200 animate-pulse" 
+                    title="Watch Verification Tutorial"
+                 >
+                    <HelpCircle className="w-5 h-5 animate-bounce" />
+                    <span>Help Video</span>
+                 </button>
+
                  <div className="h-6 w-px bg-white/30 mx-2"></div>
-                 <button onClick={undo} disabled={historyIndex <= 0} className="p-2 hover:bg-white/10 rounded-full disabled:opacity-50"><RotateCcw className="w-5 h-5"/></button>
-                 <button onClick={redo} disabled={historyIndex >= history.length - 1} className="p-2 hover:bg-white/10 rounded-full disabled:opacity-50"><RotateCw className="w-5 h-5"/></button>
-                 <button className="p-2 hover:bg-white/10 rounded-full"><Settings className="w-5 h-5"/></button>
-                 <button className="p-2 hover:bg-white/10 rounded-full"><HelpCircle className="w-5 h-5"/></button>
+
+                 <button onClick={handleLogout} className="text-orange-100 hover:text-white" title="Log Out">
+                   <LogOut className="w-5 h-5" />
+                 </button>
               </div>
             </div>
 
-            <div className="flex items-end gap-1">
+            <div className="flex items-end gap-8">
               {[
                 { id: 'hall_study', label: 'Hall Study', icon: Users },
                 { id: 'office_study', label: 'Office Study', icon: BookOpen },
@@ -263,14 +625,13 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setState(prev => ({ ...prev, currentTab: tab.id as any }))}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-t-lg font-medium transition-all ${
+                  className={`flex flex-col items-center gap-1 pb-2 font-medium transition-all border-b-4 ${
                     state.currentTab === tab.id 
-                      ? 'bg-slate-50 text-orange-600 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] translate-y-0.5' 
-                      : 'bg-white/10 text-orange-100 hover:bg-white/20'
+                      ? 'border-white text-white' 
+                      : 'border-transparent text-orange-100 hover:text-white hover:border-orange-300'
                   }`}
                 >
-                  <tab.icon className="w-4 h-4" />
-                  {tab.label}
+                  <span className="text-sm font-bold">{tab.label.replace(' ', '\n')}</span> 
                 </button>
               ))}
             </div>
@@ -278,32 +639,86 @@ export default function App() {
         </header>
       )}
 
-      {/* Toolbar / Filter Bar */}
-      <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-between shadow-sm z-10">
-         <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input type="text" placeholder="Filter students..." className="pl-9 pr-4 py-1.5 bg-slate-100 rounded-full text-sm focus:ring-2 focus:ring-orange-200 outline-none w-64" />
-            </div>
-            
-            <div className="h-6 w-px bg-slate-200"></div>
-
-            <div className="flex items-center gap-1 text-slate-600">
-               <button onClick={() => setState(p => ({...p, zoomLevel: Math.max(0.5, p.zoomLevel - 0.1)}))} className="p-1.5 hover:bg-slate-100 rounded"><ZoomOut className="w-4 h-4"/></button>
-               <span className="text-xs font-mono w-12 text-center">{Math.round(state.zoomLevel * 100)}%</span>
-               <button onClick={() => setState(p => ({...p, zoomLevel: Math.min(1.5, p.zoomLevel + 0.1)}))} className="p-1.5 hover:bg-slate-100 rounded"><ZoomIn className="w-4 h-4"/></button>
-            </div>
-         </div>
+      {/* New Redesigned Toolbar */}
+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 overflow-x-auto shadow-sm z-10 custom-scrollbar">
          
-         <div className="flex items-center gap-3">
-            {/* Always show Add Row, it adapts to the current tab */}
-            <button onClick={addStudent} className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors">
-              <Plus className="w-4 h-4" /> Add Row
+         {/* Filter Buttons with Dropdowns */}
+         <FilterDropdown 
+            icon={Users} 
+            label="Teachers" 
+            value={filters.teacher} 
+            options={uniqueTeachers} 
+            onChange={(val) => setFilters(prev => ({...prev, teacher: val}))} 
+         />
+         <FilterDropdown 
+            icon={Users} 
+            label="Assistants" 
+            value={filters.assistant} 
+            options={uniqueAssistants} 
+            onChange={(val) => setFilters(prev => ({...prev, assistant: val}))} 
+         />
+         <FilterDropdown 
+            icon={Calendar} 
+            label="Deadlines" 
+            value={filters.deadline} 
+            options={uniqueDeadlines} 
+            onChange={(val) => setFilters(prev => ({...prev, deadline: val}))} 
+         />
+         <FilterDropdown 
+            icon={Clock} 
+            label="Times" 
+            value={filters.time} 
+            options={uniqueTimes} 
+            onChange={(val) => setFilters(prev => ({...prev, time: val}))} 
+         />
+
+         {/* Clear Filters if any */}
+         {Object.values(filters).some(Boolean) && (
+            <button 
+              onClick={() => setFilters({ teacher: null, assistant: null, deadline: null, time: null })}
+              className="p-2 text-red-500 hover:bg-red-50 rounded-full"
+              title="Clear all filters"
+            >
+              <X className="w-4 h-4" />
             </button>
-            <button onClick={toggleFullScreen} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg" title="Toggle Full Screen">
-              {state.isFullScreen ? <Minimize className="w-5 h-5"/> : <Maximize className="w-5 h-5"/>}
-            </button>
+         )}
+
+         <div className="h-8 w-px bg-slate-200 mx-1"></div>
+
+         {/* Settings */}
+         <button className="p-2.5 bg-white border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-700 shadow-sm flex-shrink-0" title="Settings">
+             <Settings className="w-5 h-5" />
+         </button>
+
+         {/* Font Size */}
+         <div className="flex items-center bg-slate-100/50 rounded-lg border border-slate-200 p-1 flex-shrink-0">
+             <button onClick={() => updateFontSize(-1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-all shadow-sm hover:shadow" title="Decrease Font">
+                 <Type className="w-4 h-4 transform scale-75" />
+             </button>
+             <span className="w-10 text-center text-sm font-semibold text-slate-700 select-none">{state.fontSize}</span>
+              <button onClick={() => updateFontSize(1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-all shadow-sm hover:shadow" title="Increase Font">
+                 <Type className="w-4 h-4" />
+             </button>
          </div>
+
+         {/* Zoom */}
+         <div className="flex items-center bg-slate-100/50 rounded-lg border border-slate-200 p-1 gap-1 flex-shrink-0">
+             <button onClick={() => updateZoom(-0.1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-all shadow-sm hover:shadow" title="Zoom Out">
+                 <ZoomOut className="w-4 h-4" />
+             </button>
+             <span className="w-14 text-center text-sm font-semibold text-slate-700 select-none">{Math.round(state.zoomLevel * 100)}%</span>
+              <button onClick={() => updateZoom(0.1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-all shadow-sm hover:shadow" title="Zoom In">
+                 <ZoomIn className="w-4 h-4" />
+             </button>
+         </div>
+
+         <div className="flex-1"></div>
+         
+         {/* Action Buttons */}
+         <button onClick={toggleFullScreen} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium shadow-sm flex-shrink-0">
+             {state.isFullScreen ? <Minimize className="w-4 h-4"/> : <Maximize className="w-4 h-4"/>}
+             <span>Full Screen</span>
+         </button>
       </div>
 
       {/* Main Content Area */}
@@ -317,11 +732,14 @@ export default function App() {
            />
          ) : (
            <DataTable 
+             key={state.currentTab} 
              students={filteredStudents}
              section={state.currentTab as Section}
              levels={state.classLevels}
+             timeShifts={TIME_SHIFTS}
              onUpdate={updateStudent}
              onDelete={deleteStudent}
+             onInsert={handleInsertRow}
              zoomLevel={state.zoomLevel}
              fontSize={state.fontSize}
            />
@@ -333,6 +751,17 @@ export default function App() {
         isOpen={isQuickAddOpen}
         onClose={() => setIsQuickAddOpen(false)}
         onAdd={handleAIAdd}
+      />
+      <ConnectionModal 
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        isOnline={isCloudConnected}
+        onExport={handleExport}
+        onImport={handleImport}
+      />
+      <HelpGuide 
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
       />
 
     </div>
